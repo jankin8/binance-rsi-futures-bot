@@ -52,5 +52,16 @@ rsi_bot_v3.py      # 主程序（单文件，V3.3）
 requirements.txt   # requests, pandas
 ```
 
+## 环境变量（推荐）
+不想把密钥写进代码文件时，可以用环境变量（见 `.env.example`）：
+`BINANCE_API_KEY`、`BINANCE_SECRET_KEY`、`TG_BOT_TOKEN`、`TG_CHAT_ID`、`ENABLE_TG`。
+环境变量优先于代码顶部的同名配置，两种方式选其一即可。
+
+## 测试
+```bash
+python -m unittest discover -s tests -v
+```
+覆盖 RSI / ATR 计算与数量、价格格式化，不连网、不需要密钥。
+
 ## License
 MIT — 见 [LICENSE](LICENSE)

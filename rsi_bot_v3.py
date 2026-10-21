@@ -42,6 +42,7 @@ import hashlib
 import hmac
 import logging
 import math
+import os
 import time
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
@@ -59,6 +60,14 @@ BASE_URL           = "https://fapi.binance.com"
 TG_BOT_TOKEN = ""                # @BotFather 获取
 TG_CHAT_ID   = ""                # @userinfobot 获取
 ENABLE_TG    = True
+
+# 也可改用环境变量提供密钥（推荐：避免把真实密钥写进代码文件，见 .env.example）
+BINANCE_API_KEY    = os.environ.get("BINANCE_API_KEY", BINANCE_API_KEY)
+BINANCE_SECRET_KEY = os.environ.get("BINANCE_SECRET_KEY", BINANCE_SECRET_KEY)
+TG_BOT_TOKEN       = os.environ.get("TG_BOT_TOKEN", TG_BOT_TOKEN)
+TG_CHAT_ID         = os.environ.get("TG_CHAT_ID", TG_CHAT_ID)
+if os.environ.get("ENABLE_TG") is not None:
+    ENABLE_TG = os.environ["ENABLE_TG"].lower() not in ("0", "false", "no")
 
 # ══════════════════════════════════════════════════════════════════════
 #  📈 BTC 交易参数
