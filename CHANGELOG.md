@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased — 维护改进（2026-10-22）
+- 修复：BTC 防多开与信号判断改用灰尘仓位阈值（`BTC_DUST_QTY=0.0005`），残留灰尘仓位不再锁死信号、也不再刷屏"防爆拦截"告警；新增 `_btc_has_position` 并补单元测试
+- 修复：`_eth_open` 补零数量下单保护（与 BTC / DOGE 一致），数量截断为 0 时直接跳过并记日志
+- 文档：README 项目结构章节补全 tests / .env.example / CHANGELOG / .github 说明
+
 ## Unreleased — 维护改进（2026-10-21）
 - 配置：`BINANCE_API_KEY` / `BINANCE_SECRET_KEY` / `TG_BOT_TOKEN` / `TG_CHAT_ID` / `ENABLE_TG` 现在也支持环境变量（见 `.env.example`），代码内填写方式保持兼容
 - 新增 `tests/test_indicators.py`：RSI（Wilder / EMA）、ATR、数量/价格格式化的单元测试，不连网、不需要密钥

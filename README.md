@@ -50,6 +50,10 @@ python rsi_bot_v3.py
 ```
 rsi_bot_v3.py      # 主程序（单文件，V3.3）
 requirements.txt   # requests, pandas
+tests/             # RSI / ATR / 格式化与持仓判零的单元测试（不连网）
+.env.example       # 环境变量模板（不要提交填了真实密钥的文件）
+CHANGELOG.md       # 版本更新记录
+.github/           # CI（语法检查+单元测试）与 Dependabot 配置
 ```
 
 ## 环境变量（推荐）

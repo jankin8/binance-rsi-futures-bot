@@ -7,7 +7,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from rsi_bot_v3 import calc_atr, calc_rsi_ema, calc_rsi_wilder, floor_qty, fmt_price, fmt_qty
+from rsi_bot_v3 import (
+    BTC_DUST_QTY,
+    _btc_has_position,
+    calc_atr,
+    calc_rsi_ema,
+    calc_rsi_wilder,
+    floor_qty,
+    fmt_price,
+    fmt_qty,
+)
 
 
 class TestRSI(unittest.TestCase):
@@ -47,6 +56,18 @@ class TestFormat(unittest.TestCase):
         self.assertEqual(fmt_qty(12.0, 0), "12")
         self.assertEqual(fmt_qty(1.239, 2), "1.23")
         self.assertEqual(fmt_price(100.126, 2), "100.13")
+
+
+class TestBtcPosition(unittest.TestCase):
+    def test_dust_treated_as_no_position(self):
+        self.assertFalse(_btc_has_position(0.0))
+        self.assertFalse(_btc_has_position(0.0004))
+        self.assertFalse(_btc_has_position(-0.0004))
+        self.assertFalse(_btc_has_position(BTC_DUST_QTY))
+
+    def test_real_position_detected(self):
+        self.assertTrue(_btc_has_position(0.001))
+        self.assertTrue(_btc_has_position(-0.05))
 
 
 if __name__ == "__main__":

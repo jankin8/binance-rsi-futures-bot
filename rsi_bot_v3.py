@@ -85,6 +85,7 @@ BTC_STOP_LOSS_PCT   = 0.05        # 止损提醒价位（开仓价 ±5%），仅
 BTC_SL_COOLDOWN     = 3600        # 持仓归零后冷却秒数（1小时）
 BTC_TRADE_COOLDOWN  = 1800        # 正常交易后冷却秒数（30分钟）
 BTC_MAX_TP_RETRY    = 3           # 止盈挂单最大重试次数
+BTC_DUST_QTY        = 0.0005      # 持仓判零阈值：小于此数量视为无仓，避免灰尘仓位锁死信号
 RECV_WINDOW         = 10000       # API 时间戳容忍窗口（毫秒）
 
 # 精度（启动时自动获取）
@@ -590,15 +591,20 @@ _btc_cooldown_until:     datetime | None = None
 _btc_last_known_pos:     float           = 0.0
 
 
+def _btc_has_position(pos_amt: float) -> bool:
+    """是否持有有效 BTC 仓位（灰尘仓位视为无仓，避免锁死信号与刷屏式防爆告警）"""
+    return abs(pos_amt) > BTC_DUST_QTY
+
+
 def _btc_open(side: str, rsi: float):
     """BTC 开仓主流程"""
     global _btc_cooldown_until, _btc_last_known_pos
 
     side_label = "抄底做多" if side == "BUY" else "摸顶做空"
 
-    # ① 防多开：再次确认无持仓
+    # ① 防多开：再次确认无持仓（灰尘仓位视为无仓）
     pos_amt, _, _ = get_position(BTC_SYMBOL)
-    if pos_amt != 0.0:
+    if _btc_has_position(pos_amt):
         msg = (f"🛡️ *BTC 防爆拦截*\n"
                f"RSI={rsi:.1f} 触发，但已持仓 `{pos_amt}`，拦截多开")
         send_tg(msg)
@@ -731,11 +737,11 @@ def check_btc():
 
     print(f"  BTC 15m RSI = {rsi:.2f}", end="")
 
-    # ④ 信号判断
-    if rsi <= BTC_RSI_BUY and pos_amt == 0.0:
+    # ④ 信号判断（灰尘仓位视为无仓）
+    if rsi <= BTC_RSI_BUY and not _btc_has_position(pos_amt):
         print(" → 超卖，触发做多")
         _btc_open("BUY", rsi)
-    elif rsi >= BTC_RSI_SELL and pos_amt == 0.0:
+    elif rsi >= BTC_RSI_SELL and not _btc_has_position(pos_amt):
         print(" → 超买，触发做空")
         _btc_open("SELL", rsi)
     else:
@@ -885,6 +891,10 @@ def _eth_open(direction: str, rsi: float, is_reversal: bool = False):
 
     qty_f = ETH_TRADE_USDT / price
     qty_s = fmt_qty(qty_f, _ETH_QTY_PREC)
+    if floor_qty(qty_f, _ETH_QTY_PREC) <= 0:
+        print(f"  [ETH] 计算数量为0（名义={ETH_TRADE_USDT}，价={price}），跳过")
+        logger.warning(f"ETH 计算数量为0 | 名义={ETH_TRADE_USDT} | 价={price}")
+        return
 
     # ③ 取消旧挂单，市价开仓
     cancel_all_orders(ETH_SYMBOL)
