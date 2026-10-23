@@ -280,6 +280,18 @@ def is_order_ok(res: dict | None) -> bool:
     return res.get("status", "") in ("NEW", "FILLED", "PARTIALLY_FILLED")
 
 
+def _tp_sl_qty_s(requested_f: float, held_f: float, qty_prec: int) -> str:
+    """TP/SL 挂单数量（字符串）。
+
+    市价单可能部分成交：reduceOnly 方向的挂单数量若超过实际持仓，
+    会被币安以 -2022（ReduceOnly Order is rejected）拒单，导致止盈/止损挂不上、
+    仓位失去保护。因此取 min(请求数量, 实际持仓)；持仓查不到（held_f<=0）
+    时回退到请求数量，保持旧行为。
+    """
+    base = held_f if held_f > 0 else requested_f
+    return fmt_qty(min(requested_f, base), qty_prec)
+
+
 # ══════════════════════════════════════════════════════════════════════
 #  🔧 格式化工具
 # ══════════════════════════════════════════════════════════════════════
@@ -650,6 +662,12 @@ def _btc_open(side: str, rsi: float):
         actual_entry = price
         logger.warning("BTC 未获取成交价，降级使用标记价")
 
+    # 实际持仓数量（市价单可能部分成交）：reduceOnly 止盈单数量不得超过实际持仓
+    btc_pos_amt, _, _ = get_position(BTC_SYMBOL)
+    tp_qty_s = _tp_sl_qty_s(final_qty_f, abs(btc_pos_amt), _BTC_QTY_PREC)
+    if tp_qty_s != final_qty_s:
+        logger.info(f"BTC 部分成交 | 请求={final_qty_s} 实际持仓={btc_pos_amt} | 止盈按 {tp_qty_s} 挂单")
+
     tp_side = "SELL" if side == "BUY" else "BUY"
     tp_price = (actual_entry * (1 + BTC_TAKE_PROFIT_PCT) if side == "BUY"
                 else actual_entry * (1 - BTC_TAKE_PROFIT_PCT))
@@ -659,7 +677,7 @@ def _btc_open(side: str, rsi: float):
     tp_ok     = False
     tp_status = ""
     for attempt in range(BTC_MAX_TP_RETRY):
-        tp_res = place_limit_reduce(BTC_SYMBOL, tp_side, final_qty_s, tp_price_s)
+        tp_res = place_limit_reduce(BTC_SYMBOL, tp_side, tp_qty_s, tp_price_s)
         if is_order_ok(tp_res):
             tp_status = f"🎯 止盈已挂出，目标价 `{tp_price_s}`"
             tp_ok     = True
@@ -697,8 +715,9 @@ def _btc_open(side: str, rsi: float):
     )
     send_tg(msg)
 
-    # 更新状态
-    _btc_last_known_pos  = final_qty_f if side == "BUY" else -final_qty_f
+    # 更新状态（持仓记实际成交量，而非请求数量）
+    held_f = abs(btc_pos_amt) if abs(btc_pos_amt) > 0 else final_qty_f
+    _btc_last_known_pos  = held_f if side == "BUY" else -held_f
     _btc_cooldown_until  = datetime.now() + timedelta(seconds=BTC_TRADE_COOLDOWN)
     print(f"  [BTC] ✅ {side_label} 完成 @ {actual_entry:.1f}")
 
@@ -915,6 +934,12 @@ def _eth_open(direction: str, rsi: float, is_reversal: bool = False):
         fill_price = price
         logger.warning("ETH 未获取成交价，降级使用标记价")
 
+    # 实际持仓数量（市价单可能部分成交）：reduceOnly 止盈单数量不得超过实际持仓
+    eth_pos_amt, _, _ = get_position(ETH_SYMBOL)
+    tp_qty_s = _tp_sl_qty_s(qty_f, abs(eth_pos_amt), _ETH_QTY_PREC)
+    if tp_qty_s != qty_s:
+        logger.info(f"ETH 部分成交 | 请求={qty_s} 实际持仓={eth_pos_amt} | 止盈按 {tp_qty_s} 挂单")
+
     # ⑤ 计算止盈价（±0.5%，与 BTC 一致）
     tp_price   = (fill_price * (1 + ETH_TAKE_PROFIT_PCT) if direction == "long"
                   else fill_price * (1 - ETH_TAKE_PROFIT_PCT))
@@ -924,7 +949,7 @@ def _eth_open(direction: str, rsi: float, is_reversal: bool = False):
     tp_ok     = False
     tp_status = ""
     for attempt in range(ETH_MAX_TP_RETRY):
-        tp_res = place_limit_reduce(ETH_SYMBOL, tp_side, qty_s, tp_price_s)
+        tp_res = place_limit_reduce(ETH_SYMBOL, tp_side, tp_qty_s, tp_price_s)
         if is_order_ok(tp_res):
             tp_status = f"🎯 止盈已挂出，目标价 `{tp_price_s}`"
             tp_ok     = True
@@ -938,11 +963,11 @@ def _eth_open(direction: str, rsi: float, is_reversal: bool = False):
         tp_status = (f"⚠️ 止盈连续失败 {ETH_MAX_TP_RETRY} 次（仓位保留，不平仓）\n"
                      f"原因: `{_last_api_error}`")
         logger.error(f"ETH 止盈全部失败 | 原因={_last_api_error}（仓位保留）")
-        send_tg(f"⚠️ *ETH 止盈缺失*\n仓位 `{qty_s}` ETH 已开但止盈未挂上，仓位保留\n原因: `{_last_api_error}`\n{now_str()}")
+        send_tg(f"⚠️ *ETH 止盈缺失*\n仓位 `{tp_qty_s}` ETH 已开但止盈未挂上，仓位保留\n原因: `{_last_api_error}`\n{now_str()}")
 
     # ⑦ 挂 ATR 动态止损（失败→记录真因+告警、仓位保留，绝不平仓）
     sl_ok, sl_status = place_atr_stop_loss(
-        ETH_SYMBOL, "ETH", tp_side, direction, fill_price, qty_s,
+        ETH_SYMBOL, "ETH", tp_side, direction, fill_price, tp_qty_s,
         ETH_ATR_PERIOD, ETH_SL_ATR_MULT, ETH_SL_MIN_PCT, ETH_SL_MAX_PCT,
         _ETH_PRICE_PREC, ETH_INTERVAL, ETH_MAX_TP_RETRY,
     )
@@ -966,12 +991,11 @@ def _eth_open(direction: str, rsi: float, is_reversal: bool = False):
     logger.info(f"ETH 开仓完成 | {dir_label} @ {fill_price:.2f} | 止盈成功={tp_ok} | 止损成功={sl_ok}")
     print(f"  [ETH] ✅ {dir_label} @ {fill_price:.2f}（止盈={tp_ok} 止损={sl_ok}）")
 
-    # ⑨ 更新冷却状态（反手开仓时跳过，避免双重冷却）
+    # ⑨ 更新冷却状态（反手开仓时跳过，避免双重冷却；持仓记实际成交量）
+    held_f = abs(eth_pos_amt) if abs(eth_pos_amt) > 0 else qty_f
+    _eth_last_known_pos = held_f if direction == "long" else -held_f
     if not is_reversal:
-        _eth_last_known_pos  = qty_f if direction == "long" else -qty_f
-        _eth_cooldown_until  = datetime.now() + timedelta(seconds=ETH_TRADE_COOLDOWN)
-    else:
-        _eth_last_known_pos  = qty_f if direction == "long" else -qty_f
+        _eth_cooldown_until = datetime.now() + timedelta(seconds=ETH_TRADE_COOLDOWN)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1182,6 +1206,12 @@ def _doge_open(direction: str, rsi_fast: float, rsi_slow: float,
         fill_price = price
         logger.warning("DOGE 未获取成交价，降级使用标记价")
 
+    # 实际持仓数量（市价单可能部分成交）：reduceOnly 止盈单数量不得超过实际持仓
+    doge_pos_amt, _, _ = get_position(DOGE_SYMBOL)
+    tp_qty_s = _tp_sl_qty_s(qty_f, abs(doge_pos_amt), _DOGE_QTY_PREC)
+    if tp_qty_s != qty_s:
+        logger.info(f"DOGE 部分成交 | 请求={qty_s} 实际持仓={doge_pos_amt} | 止盈按 {tp_qty_s} 挂单")
+
     # ⑤ 止盈价
     tp_price   = (fill_price * (1 + DOGE_TAKE_PROFIT_PCT) if direction == "long"
                   else fill_price * (1 - DOGE_TAKE_PROFIT_PCT))
@@ -1191,7 +1221,7 @@ def _doge_open(direction: str, rsi_fast: float, rsi_slow: float,
     tp_ok     = False
     tp_status = ""
     for attempt in range(DOGE_MAX_TP_RETRY):
-        tp_res = place_limit_reduce(DOGE_SYMBOL, tp_side, qty_s, tp_price_s)
+        tp_res = place_limit_reduce(DOGE_SYMBOL, tp_side, tp_qty_s, tp_price_s)
         if is_order_ok(tp_res):
             tp_status = f"🎯 止盈已挂出，目标价 `{tp_price_s}`"
             tp_ok     = True
@@ -1204,11 +1234,11 @@ def _doge_open(direction: str, rsi_fast: float, rsi_slow: float,
         tp_status = (f"⚠️ 止盈连续失败 {DOGE_MAX_TP_RETRY} 次（仓位保留，不平仓）\n"
                      f"原因: `{_last_api_error}`")
         logger.error(f"DOGE 止盈全部失败 | 原因={_last_api_error}（仓位保留）")
-        send_tg(f"⚠️ *DOGE 止盈缺失*\n仓位 `{qty_s}` DOGE 已开但止盈未挂上，仓位保留\n原因: `{_last_api_error}`\n{now_str()}")
+        send_tg(f"⚠️ *DOGE 止盈缺失*\n仓位 `{tp_qty_s}` DOGE 已开但止盈未挂上，仓位保留\n原因: `{_last_api_error}`\n{now_str()}")
 
     # ⑦ 挂 ATR 动态止损（失败→记录真因+告警、仓位保留）
     sl_ok, sl_status = place_atr_stop_loss(
-        DOGE_SYMBOL, "DOGE", tp_side, direction, fill_price, qty_s,
+        DOGE_SYMBOL, "DOGE", tp_side, direction, fill_price, tp_qty_s,
         DOGE_ATR_PERIOD, DOGE_SL_ATR_MULT, DOGE_SL_MIN_PCT, DOGE_SL_MAX_PCT,
         _DOGE_PRICE_PREC, DOGE_TF_FAST, DOGE_MAX_TP_RETRY,
     )
@@ -1232,12 +1262,11 @@ def _doge_open(direction: str, rsi_fast: float, rsi_slow: float,
     logger.info(f"DOGE 开仓完成 | {dir_label} @ {fill_price:.5f} | 止盈成功={tp_ok} | 止损成功={sl_ok}")
     print(f"  [DOGE] ✅ {dir_label} @ {fill_price:.5f}（止盈={tp_ok} 止损={sl_ok}）")
 
-    # ⑨ 更新冷却状态（反手开仓时跳过）
+    # ⑨ 更新冷却状态（反手开仓时跳过，避免双重冷却；持仓记实际成交量）
+    held_f = abs(doge_pos_amt) if abs(doge_pos_amt) > 0 else qty_f
+    _doge_last_known_pos = held_f if direction == "long" else -held_f
     if not is_reversal:
-        _doge_last_known_pos = qty_f if direction == "long" else -qty_f
         _doge_cooldown_until = datetime.now() + timedelta(seconds=DOGE_TRADE_COOLDOWN)
-    else:
-        _doge_last_known_pos = qty_f if direction == "long" else -qty_f
 
 
 # ══════════════════════════════════════════════════════════════════════

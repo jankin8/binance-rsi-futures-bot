@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from rsi_bot_v3 import (
     BTC_DUST_QTY,
     _btc_has_position,
+    _tp_sl_qty_s,
     calc_atr,
     calc_rsi_ema,
     calc_rsi_wilder,
@@ -68,6 +69,26 @@ class TestBtcPosition(unittest.TestCase):
     def test_real_position_detected(self):
         self.assertTrue(_btc_has_position(0.001))
         self.assertTrue(_btc_has_position(-0.05))
+
+
+class TestTpSlQty(unittest.TestCase):
+    def test_partial_fill_uses_held(self):
+        # 市价单部分成交：止盈按实际持仓挂单，避免 -2022 拒单
+        self.assertEqual(_tp_sl_qty_s(2.5, 2.4, 2), "2.40")
+
+    def test_full_fill_uses_requested(self):
+        self.assertEqual(_tp_sl_qty_s(2.5, 2.5, 2), "2.50")
+
+    def test_held_unknown_falls_back_to_requested(self):
+        # 持仓查询失败（held=0）：回退到请求数量，保持旧行为
+        self.assertEqual(_tp_sl_qty_s(2.5, 0.0, 2), "2.50")
+
+    def test_held_above_requested_uses_requested(self):
+        # 反手残留余量导致持仓略大于请求：仍按请求数量
+        self.assertEqual(_tp_sl_qty_s(2.5, 2.5078, 2), "2.50")
+
+    def test_zero_precision(self):
+        self.assertEqual(_tp_sl_qty_s(8000.7, 8000.0, 0), "8000")
 
 
 if __name__ == "__main__":
